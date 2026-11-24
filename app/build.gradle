@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.easydownloader.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.easydownloader.app"
+        minSdk 26
+        targetSdk 28
+        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1") + 300
+        versionName "1.0.0"
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+    }
+
+    signingConfigs {
+        if (file('easydl.keystore').exists()) {
+            debug {
+                storeFile file('easydl.keystore')
+                storePassword 'easydl123'
+                keyAlias 'easydl'
+                keyPassword 'easydl123'
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (file('easydl.keystore').exists()) signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildFeatures { viewBinding true }
+    packagingOptions {
+        jniLibs { useLegacyPackaging true }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'com.github.yausername.youtubedl-android:library:0.17.4'
+    implementation 'com.github.yausername.youtubedl-android:ffmpeg:0.17.4'
+}
