@@ -2,6 +2,7 @@ package com.easydownloader.app
 
 import android.app.Application
 import android.content.Context
+import android.content.Context.MODE_PRIVATE
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 
@@ -28,6 +29,18 @@ object Engine {
             error = null
         } catch (e: Throwable) {
             error = e.message ?: "engine init failed"
+            return
+        }
+        // yt-dlp ko din me ek baar update karte hain, taaki YouTube badalne par app chalti rahe
+        try {
+            val prefs = ctx.getSharedPreferences("easydl", MODE_PRIVATE)
+            val last = prefs.getLong("ytdlp_update", 0L)
+            if (System.currentTimeMillis() - last > 24L * 60L * 60L * 1000L) {
+                YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel._STABLE)
+                prefs.edit().putLong("ytdlp_update", System.currentTimeMillis()).apply()
+            }
+        } catch (e: Throwable) {
+            // internet nahi hai to purani yt-dlp se kaam chalega
         }
     }
 }
