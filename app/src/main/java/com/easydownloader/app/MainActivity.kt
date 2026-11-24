@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -166,11 +167,16 @@ class MainActivity : AppCompatActivity() {
             req.addOption("-x")
             req.addOption("--audio-format", "mp3")
             req.addOption("--audio-quality", "${kbps}K")
+            // video ka thumbnail MP3 ke andar cover art ke roop me, aur title/artist tags
+            req.addOption("--embed-thumbnail")
+            req.addOption("--convert-thumbnails", "jpg")
+            req.addOption("--embed-metadata")
         } else {
             req.addOption("-f", "bv*[height<=$height]+ba/b[height<=$height]/b")
             req.addOption("--merge-output-format", "mp4")
         }
 
+        val startedAt = System.currentTimeMillis()
         busy = true
         b.btnDownload.text = "Downloading…"
         b.btnDownload.setBackgroundResource(R.drawable.bg_btn_off)
@@ -193,17 +199,37 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Throwable) {
                 err = e.message ?: "download failed"
             }
-            ui.post { finish(err) }
+            ui.post { finish(err, startedAt) }
         }
     }
 
-    private fun finish(err: String?) {
+    /** Naye files ko MediaStore me register karta hai, warna music player me nahi dikhte. */
+    private fun scanNew(since: Long) {
+        try {
+            val dir = outDir()
+            val fresh = dir.listFiles()?.filter {
+                it.isFile && it.lastModified() >= since - 5000
+            } ?: return
+            if (fresh.isEmpty()) return
+            MediaScannerConnection.scanFile(
+                this,
+                fresh.map { it.absolutePath }.toTypedArray(),
+                fresh.map { mimeOf(it) }.toTypedArray(),
+                null
+            )
+        } catch (e: Throwable) {
+            // scan fail ho jaye to bhi download to ho chuka hai
+        }
+    }
+
+    private fun finish(err: String?, startedAt: Long) {
         busy = false
         b.btnDownload.text = "Download"
         b.btnDownload.setBackgroundResource(R.drawable.bg_btn)
         if (err == null) {
             b.progressBar.progress = 100
             b.status.text = "Ho gaya — Downloads/EasyDownloader me save hai"
+            scanNew(startedAt)
             toast("Download complete")
             ui.postDelayed({ b.progressBox.visibility = View.GONE }, 2500)
         } else {
