@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var kbps = 192
     private var height = 720
     private var busy = false
+    private var clipLink = ""
 
     private val askWrite =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -54,6 +55,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         b.btnPaste.setOnClickListener { paste() }
+        b.btnClear.setOnClickListener {
+            b.linkInput.setText("")
+            b.clipBox.visibility = View.GONE
+            detect()
+        }
+        b.clipUse.setOnClickListener {
+            if (clipLink.isNotEmpty()) b.linkInput.setText(clipLink)
+            b.clipBox.visibility = View.GONE
+            detect()
+        }
         b.modeAudio.setOnClickListener { setMode(true) }
         b.modeVideo.setOnClickListener { setMode(false) }
         b.chip1.setOnClickListener { pick(0) }
@@ -70,6 +81,32 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshList()
+        checkClip()
+    }
+
+    /** Clipboard me link ho to upar "Use →" wali patti dikhao. */
+    private fun checkClip() {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val t = cm.primaryClip?.getItemAt(0)?.text?.toString()?.trim().orEmpty()
+            val cur = b.linkInput.text.toString().trim()
+            if (t.length > 12 && (t.startsWith("http://") || t.startsWith("https://")) && t != cur) {
+                clipLink = t
+                b.clipLbl.text = "COPIED LINK READY \u00B7 " + platformName(t).uppercase()
+                b.clipBox.visibility = View.VISIBLE
+            } else {
+                b.clipBox.visibility = View.GONE
+            }
+        } catch (e: Throwable) {
+            b.clipBox.visibility = View.GONE
+        }
+    }
+
+    private fun platformName(u: String): String = when {
+        u.contains("youtu") -> "YouTube"
+        u.contains("instagram") -> "Instagram"
+        u.contains("facebook") || u.contains("fb.watch") -> "Facebook"
+        else -> "Link"
     }
 
     private fun paste() {
@@ -134,17 +171,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun outDir(): File {
-        val pub = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "EasyDownloader"
-        )
+    /** Audio -> Music/EasyDownloader (music player), Video -> DCIM/EasyDownloader (Google Photos album). */
+    private fun outDir(audio: Boolean = audioMode): File {
+        val base = if (audio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_DCIM
+        val pub = File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader")
         if (!pub.exists()) pub.mkdirs()
         if (pub.canWrite()) return pub
         val priv = File(getExternalFilesDir(null), "EasyDownloader")
         if (!priv.exists()) priv.mkdirs()
         return priv
     }
+
+    private fun allDirs(): List<File> = listOf(outDir(true), outDir(false))
+        .distinctBy { it.absolutePath }
 
     private fun start() {
         if (busy) return
@@ -158,7 +197,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val dir = outDir()
+        val dir = outDir(audioMode)
         val req = YoutubeDLRequest(url)
         req.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
         req.addOption("--no-mtime")
@@ -206,10 +245,10 @@ class MainActivity : AppCompatActivity() {
     /** Naye files ko MediaStore me register karta hai, warna music player me nahi dikhte. */
     private fun scanNew(since: Long) {
         try {
-            val dir = outDir()
-            val fresh = dir.listFiles()?.filter {
-                it.isFile && it.lastModified() >= since - 5000
-            } ?: return
+            val fresh = allDirs().flatMap { d ->
+                d.listFiles()?.filter { it.isFile && it.lastModified() >= since - 5000 }?.toList() ?: emptyList()
+            }
+            if (fresh.isEmpty()) return
             if (fresh.isEmpty()) return
             MediaScannerConnection.scanFile(
                 this,
@@ -241,8 +280,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshList() {
-        val dir = outDir()
-        val files = dir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val files = allDirs()
+            .flatMap { d -> d.listFiles()?.filter { it.isFile }?.toList() ?: emptyList() }
+            .sortedByDescending { it.lastModified() }
         b.listBox.removeAllViews()
         b.emptyText.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
         val inf = LayoutInflater.from(this)
