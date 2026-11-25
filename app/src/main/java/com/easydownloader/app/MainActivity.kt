@@ -2,6 +2,8 @@ package com.easydownloader.app
 
 import android.Manifest
 import android.content.ClipboardManager
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,9 +14,9 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -47,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
 
-        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT <= 29 &&
+        if (Build.VERSION.SDK_INT <= 28 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -84,7 +86,6 @@ class MainActivity : AppCompatActivity() {
         checkClip()
     }
 
-    /** Clipboard me link ho to upar "Use →" wali patti dikhao. */
     private fun checkClip() {
         try {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -117,6 +118,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         b.linkInput.setText(txt)
+        b.clipBox.visibility = View.GONE
         detect()
     }
 
@@ -137,7 +139,7 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 b.tagPlatform.text = "OTHER"
-                b.hint.text = "Try karte hain — support ho sakta hai"
+                b.hint.text = "Try karte hain \u2014 support ho sakta hai"
             }
         }
     }
@@ -171,19 +173,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Audio -> Music/EasyDownloader (music player), Video -> DCIM/EasyDownloader (Google Photos album). */
-    private fun outDir(audio: Boolean = audioMode): File {
-        val base = if (audio) Environment.DIRECTORY_MUSIC else Environment.DIRECTORY_DCIM
-        val pub = File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader")
-        if (!pub.exists()) pub.mkdirs()
-        if (pub.canWrite()) return pub
-        val priv = File(getExternalFilesDir(null), "EasyDownloader")
-        if (!priv.exists()) priv.mkdirs()
-        return priv
+    /** yt-dlp yahan likhta hai (app ka apna folder — bina permission ke chalta hai). */
+    private fun tempDir(): File {
+        val d = File(getExternalFilesDir(null), "EasyDownloader")
+        if (!d.exists()) d.mkdirs()
+        return d
     }
 
-    private fun allDirs(): List<File> = listOf(outDir(true), outDir(false))
-        .distinctBy { it.absolutePath }
+    private fun isVideoFile(f: File): Boolean =
+        f.extension.lowercase() in listOf("mp4", "webm", "mkv", "3gp", "m4v", "mov")
+
+    private fun mimeOf(f: File): String = when (f.extension.lowercase()) {
+        "mp3" -> "audio/mpeg"
+        "m4a" -> "audio/mp4"
+        "aac" -> "audio/aac"
+        "opus", "ogg" -> "audio/ogg"
+        "mp4" -> "video/mp4"
+        "webm" -> "video/webm"
+        "mkv" -> "video/x-matroska"
+        else -> "application/octet-stream"
+    }
 
     private fun start() {
         if (busy) return
@@ -193,11 +202,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (!Engine.ready) {
-            toast(Engine.error ?: "Engine taiyar ho raha hai, 2 second…")
+            toast(Engine.error ?: "Engine taiyar ho raha hai, 2 second\u2026")
             return
         }
 
-        val dir = outDir(audioMode)
+        val dir = tempDir()
         val req = YoutubeDLRequest(url)
         req.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
         req.addOption("--no-mtime")
@@ -206,7 +215,6 @@ class MainActivity : AppCompatActivity() {
             req.addOption("-x")
             req.addOption("--audio-format", "mp3")
             req.addOption("--audio-quality", "${kbps}K")
-            // video ka thumbnail MP3 ke andar cover art ke roop me, aur title/artist tags
             req.addOption("--embed-thumbnail")
             req.addOption("--convert-thumbnails", "jpg")
             req.addOption("--embed-metadata")
@@ -217,11 +225,11 @@ class MainActivity : AppCompatActivity() {
 
         val startedAt = System.currentTimeMillis()
         busy = true
-        b.btnDownload.text = "Downloading…"
+        b.btnDownload.text = "Downloading\u2026"
         b.btnDownload.setBackgroundResource(R.drawable.bg_btn_off)
         b.progressBox.visibility = View.VISIBLE
         b.progressBar.progress = 0
-        b.status.text = "Shuru kar rahe hain…"
+        b.status.text = "Shuru kar rahe hain\u2026"
 
         val cb: (Float, Long, String) -> Unit = { p, _eta, line ->
             ui.post {
@@ -238,38 +246,87 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Throwable) {
                 err = e.message ?: "download failed"
             }
-            ui.post { finish(err, startedAt) }
-        }
-    }
-
-    /** Naye files ko MediaStore me register karta hai, warna music player me nahi dikhte. */
-    private fun scanNew(since: Long) {
-        try {
-            val fresh = allDirs().flatMap { d ->
-                d.listFiles()?.filter { it.isFile && it.lastModified() >= since - 5000 }?.toList() ?: emptyList()
+            ui.post {
+                if (err == null) {
+                    val moved = export(startedAt)
+                    finish(null, moved)
+                } else {
+                    finish(err, 0)
+                }
             }
-            if (fresh.isEmpty()) return
-            if (fresh.isEmpty()) return
-            MediaScannerConnection.scanFile(
-                this,
-                fresh.map { it.absolutePath }.toTypedArray(),
-                fresh.map { mimeOf(it) }.toTypedArray(),
-                null
-            )
-        } catch (e: Throwable) {
-            // scan fail ho jaye to bhi download to ho chuka hai
         }
     }
 
-    private fun finish(err: String?, startedAt: Long) {
+    /**
+     * Naye files ko phone ki gallery/music library (MediaStore) me daalta hai.
+     * Video -> DCIM/EasyDownloader (Google Photos album), Audio -> Music/EasyDownloader.
+     */
+    private fun export(since: Long): Int {
+        val fresh = tempDir().listFiles()?.filter {
+            it.isFile && it.lastModified() >= since - 5000
+        } ?: emptyList()
+        var n = 0
+        for (f in fresh) {
+            val video = isVideoFile(f)
+            val mime = mimeOf(f)
+            try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val collection =
+                        if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    val rel =
+                        if (video) Environment.DIRECTORY_DCIM + "/EasyDownloader"
+                        else Environment.DIRECTORY_MUSIC + "/EasyDownloader"
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, rel)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val uri = contentResolver.insert(collection, values)
+                    if (uri != null) {
+                        contentResolver.openOutputStream(uri)?.use { out ->
+                            f.inputStream().use { it.copyTo(out, 64 * 1024) }
+                        }
+                        val done = ContentValues()
+                        done.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        contentResolver.update(uri, done, null, null)
+                        f.delete()
+                        n++
+                    }
+                } else {
+                    val base =
+                        if (video) Environment.DIRECTORY_DCIM else Environment.DIRECTORY_MUSIC
+                    val dest = File(
+                        Environment.getExternalStoragePublicDirectory(base),
+                        "EasyDownloader"
+                    )
+                    if (!dest.exists()) dest.mkdirs()
+                    val out = File(dest, f.name)
+                    f.copyTo(out, overwrite = true)
+                    f.delete()
+                    MediaScannerConnection.scanFile(
+                        this, arrayOf(out.absolutePath), arrayOf(mime), null
+                    )
+                    n++
+                }
+            } catch (e: Throwable) {
+                // ek file fail ho to baaki chalti rahe
+            }
+        }
+        return n
+    }
+
+    private fun finish(err: String?, moved: Int) {
         busy = false
         b.btnDownload.text = "Download"
         b.btnDownload.setBackgroundResource(R.drawable.bg_btn)
         if (err == null) {
             b.progressBar.progress = 100
-            b.status.text = "Ho gaya — Downloads/EasyDownloader me save hai"
-            scanNew(startedAt)
-            toast("Download complete")
+            b.status.text =
+                if (moved > 0) "Ho gaya \u2014 gallery/music me save hai"
+                else "Ho gaya, par file save nahi ho payi"
+            toast(if (moved > 0) "Download complete" else "File save nahi hui")
             ui.postDelayed({ b.progressBox.visibility = View.GONE }, 2500)
         } else {
             b.progressBar.progress = 0
@@ -279,19 +336,83 @@ class MainActivity : AppCompatActivity() {
         refreshList()
     }
 
+    // ---------------- downloads list ----------------
+
+    private class Item(val name: String, val size: Long, val uri: Uri, val mime: String, val added: Long)
+
+    private fun loadItems(): List<Item> {
+        val out = mutableListOf<Item>()
+        if (Build.VERSION.SDK_INT >= 29) {
+            out += query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+            out += query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
+        } else {
+            val bases = listOf(Environment.DIRECTORY_DCIM, Environment.DIRECTORY_MUSIC)
+            for (base in bases) {
+                val d = File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader")
+                d.listFiles()?.filter { it.isFile }?.forEach {
+                    out.add(
+                        Item(
+                            it.name, it.length(),
+                            FileProvider.getUriForFile(this, packageName + ".fileprovider", it),
+                            mimeOf(it), it.lastModified()
+                        )
+                    )
+                }
+            }
+        }
+        return out.sortedByDescending { it.added }
+    }
+
+    private fun query(collection: Uri): List<Item> {
+        val res = mutableListOf<Item>()
+        try {
+            val proj = arrayOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.RELATIVE_PATH
+            )
+            val sel = "(" + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +
+                MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?)"
+            val args = arrayOf("DCIM/EasyDownloader%", "Music/EasyDownloader%")
+            contentResolver.query(collection, proj, sel, args, MediaStore.MediaColumns.DATE_ADDED + " DESC")?.use { c ->
+                val iId = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val iName = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val iSize = c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                val iMime = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+                val iDate = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                while (c.moveToNext()) {
+                    val id = c.getLong(iId)
+                    res.add(
+                        Item(
+                            c.getString(iName) ?: "file",
+                            c.getLong(iSize),
+                            ContentUris.withAppendedId(collection, id),
+                            c.getString(iMime) ?: "*/*",
+                            c.getLong(iDate) * 1000L
+                        )
+                    )
+                }
+            }
+        } catch (e: Throwable) {
+            // ignore
+        }
+        return res
+    }
+
     private fun refreshList() {
-        val files = allDirs()
-            .flatMap { d -> d.listFiles()?.filter { it.isFile }?.toList() ?: emptyList() }
-            .sortedByDescending { it.lastModified() }
+        val items = loadItems()
         b.listBox.removeAllViews()
-        b.emptyText.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
+        b.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         val inf = LayoutInflater.from(this)
-        for (f in files.take(25)) {
+        for (it in items.take(25)) {
             val row: ItemDownloadBinding = ItemDownloadBinding.inflate(inf, b.listBox, false)
-            row.rowName.text = f.name
-            row.rowMeta.text = size(f.length()) + " · " + f.extension.uppercase()
-            row.rowOpen.setOnClickListener { open(f) }
-            row.rowShare.setOnClickListener { share(f) }
+            row.rowName.text = it.name
+            row.rowMeta.text = size(it.size) + " \u00B7 " + it.name.substringAfterLast('.', "").uppercase()
+            row.rowOpen.setOnClickListener { openUri(it) }
+            row.rowShare.setOnClickListener { shareUri(it) }
             b.listBox.addView(row.root)
         }
     }
@@ -302,35 +423,24 @@ class MainActivity : AppCompatActivity() {
         else -> "$n B"
     }
 
-    private fun uriOf(f: File): Uri =
-        FileProvider.getUriForFile(this, packageName + ".fileprovider", f)
-
-    private fun mimeOf(f: File): String = when (f.extension.lowercase()) {
-        "mp3" -> "audio/mpeg"
-        "m4a" -> "audio/mp4"
-        "mp4" -> "video/mp4"
-        "webm" -> "video/webm"
-        else -> "*/*"
-    }
-
-    private fun open(f: File) {
+    private fun openUri(i: Item) {
         try {
-            val i = Intent(Intent.ACTION_VIEW)
-            i.setDataAndType(uriOf(f), mimeOf(f))
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(i)
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(i.uri, i.mime)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(intent)
         } catch (e: Exception) {
             toast("Koi app nahi mila is file ke liye")
         }
     }
 
-    private fun share(f: File) {
+    private fun shareUri(i: Item) {
         try {
-            val i = Intent(Intent.ACTION_SEND)
-            i.type = mimeOf(f)
-            i.putExtra(Intent.EXTRA_STREAM, uriOf(f))
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(Intent.createChooser(i, "Share"))
+            val intent = Intent(Intent.ACTION_SEND)
+            intent.type = i.mime
+            intent.putExtra(Intent.EXTRA_STREAM, i.uri)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(intent, "Share"))
         } catch (e: Exception) {
             toast("Share nahi ho paya")
         }
