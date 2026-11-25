@@ -407,12 +407,12 @@ class MainActivity : AppCompatActivity() {
         b.listBox.removeAllViews()
         b.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         val inf = LayoutInflater.from(this)
-        for (it in items.take(25)) {
+        for (item in items.take(25)) {
             val row: ItemDownloadBinding = ItemDownloadBinding.inflate(inf, b.listBox, false)
-            row.rowName.text = it.name
-            row.rowMeta.text = size(it.size) + " \u00B7 " + it.name.substringAfterLast('.', "").uppercase()
-            row.rowOpen.setOnClickListener { openUri(it) }
-            row.rowShare.setOnClickListener { shareUri(it) }
+            row.rowName.text = item.name
+            row.rowMeta.text = size(item.size) + " \u00B7 " + item.name.substringAfterLast('.', "").uppercase()
+            row.rowOpen.setOnClickListener { openUri(item) }
+            row.rowShare.setOnClickListener { shareUri(item) }
             b.listBox.addView(row.root)
         }
     }
