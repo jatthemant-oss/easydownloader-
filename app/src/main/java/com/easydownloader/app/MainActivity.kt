@@ -29,6 +29,8 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import java.io.File
 import java.util.concurrent.Executors
 
+private const val FOLDER = "EasyDownloader"
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
@@ -341,9 +343,8 @@ class MainActivity : AppCompatActivity() {
                     val collection =
                         if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                         else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                    val rel =
-                        if (video) Environment.DIRECTORY_DCIM + "/EasyDownloader"
-                        else Environment.DIRECTORY_MUSIC + "/EasyDownloader"
+                    // SnapTube jaisa: storage root me EasyDownloader folder
+                    val rel = FOLDER
                     val now = System.currentTimeMillis()
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
@@ -363,10 +364,9 @@ class MainActivity : AppCompatActivity() {
                         done.put(MediaStore.MediaColumns.IS_PENDING, 0)
                         contentResolver.update(uri, done, null, null)
                         // gallery/photos ko batao ki naya file aaya hai
-                        val base = if (video) Environment.DIRECTORY_DCIM else Environment.DIRECTORY_MUSIC
                         val shown = File(
-                            File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader"),
-                            f.name
+                            Environment.getExternalStorageDirectory(),
+                            FOLDER + "/" + f.name
                         )
                         MediaScannerConnection.scanFile(
                             this, arrayOf(shown.absolutePath), arrayOf(mime), null
@@ -375,12 +375,7 @@ class MainActivity : AppCompatActivity() {
                         n++
                     }
                 } else {
-                    val base =
-                        if (video) Environment.DIRECTORY_DCIM else Environment.DIRECTORY_MUSIC
-                    val dest = File(
-                        Environment.getExternalStoragePublicDirectory(base),
-                        "EasyDownloader"
-                    )
+                    val dest = File(Environment.getExternalStorageDirectory(), FOLDER)
                     if (!dest.exists()) dest.mkdirs()
                     val out = File(dest, f.name)
                     f.copyTo(out, overwrite = true)
@@ -421,13 +416,14 @@ class MainActivity : AppCompatActivity() {
         try {
             var count = 0
             if (Build.VERSION.SDK_INT >= 29) {
-                val dirs = listOf(
-                    Pair(Environment.DIRECTORY_DCIM, MediaStore.Video.Media.EXTERNAL_CONTENT_URI),
-                    Pair(Environment.DIRECTORY_MUSIC, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
+                val collections = listOf(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                 )
-                for ((base, collection) in dirs) {
-                    val sel = MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?"
-                    val args = arrayOf(base + "/EasyDownloader%")
+                for (collection in collections) {
+                    val sel = "(" + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +
+                        MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?)"
+                    val args = arrayOf(FOLDER + "%", "%/" + FOLDER + "%")
                     contentResolver.query(
                         collection,
                         arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE),
@@ -436,10 +432,8 @@ class MainActivity : AppCompatActivity() {
                         val iName = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                         val iMime = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
                         while (c.moveToNext()) {
-                            val p = File(
-                                File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader"),
-                                c.getString(iName) ?: continue
-                            )
+                            val name = c.getString(iName) ?: continue
+                            val p = File(File(Environment.getExternalStorageDirectory(), FOLDER), name)
                             MediaScannerConnection.scanFile(
                                 this, arrayOf(p.absolutePath), arrayOf(c.getString(iMime) ?: "*/*"), null
                             )
@@ -465,9 +459,12 @@ class MainActivity : AppCompatActivity() {
             out += query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             out += query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
         } else {
-            val bases = listOf(Environment.DIRECTORY_DCIM, Environment.DIRECTORY_MUSIC)
-            for (base in bases) {
-                val d = File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader")
+            val dirs = listOf(
+                File(Environment.getExternalStorageDirectory(), FOLDER),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), FOLDER),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), FOLDER)
+            )
+            for (d in dirs) {
                 d.listFiles()?.filter { it.isFile }?.forEach {
                     out.add(
                         Item(
@@ -494,8 +491,10 @@ class MainActivity : AppCompatActivity() {
                 MediaStore.MediaColumns.RELATIVE_PATH
             )
             val sel = "(" + MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +
+                MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +
+                MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +
                 MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?)"
-            val args = arrayOf("DCIM/EasyDownloader%", "Music/EasyDownloader%")
+            val args = arrayOf(FOLDER + "%", "DCIM/" + FOLDER + "%", "Music/" + FOLDER + "%", "Movies/" + FOLDER + "%")
             contentResolver.query(collection, proj, sel, args, MediaStore.MediaColumns.DATE_ADDED + " DESC")?.use { c ->
                 val iId = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val iName = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)

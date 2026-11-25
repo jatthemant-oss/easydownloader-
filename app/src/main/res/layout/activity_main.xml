@@ -406,7 +406,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
             android:lineSpacingExtra="2dp"
-            android:text="Video/Reel: DCIM/EasyDownloader  ·  MP3: Music/EasyDownloader\nGoogle Photos me: neeche Library tab → Photos on device → EasyDownloader\n\nSirf apna content, ya jiska aapko haq ho — wahi download karo."
+            android:text="Sab kuch yahan: /storage/emulated/0/EasyDownloader\nGoogle Photos me: Library tab → Photos on device → EasyDownloader\n\nSirf apna content, ya jiska aapko haq ho — wahi download karo."
             android:textColor="#5E6678"
             android:textSize="10sp" />
     </LinearLayout>
