@@ -278,10 +278,10 @@ class MainActivity : AppCompatActivity() {
             val msg = lastErr?.message
             ui.post {
                 if (msg == null) {
-                    val moved = export(startedAt)
-                    finish(null, moved)
+                    val (moved, saveErr) = export(startedAt)
+                    finish(null, moved, saveErr)
                 } else {
-                    finish(friendly(msg), 0)
+                    finish(friendly(msg), 0, null)
                 }
             }
         }
@@ -328,24 +328,38 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Naye files ko phone ki gallery/music library (MediaStore) me daalta hai.
-     * Video -> DCIM/EasyDownloader (Google Photos album), Audio -> Music/EasyDownloader.
+     * Pehle storage root me /EasyDownloader, phir Movies/Music/Download me fallback.
      */
-    private fun export(since: Long): Int {
+    private fun export(since: Long): Pair<Int, String?> {
         val fresh = tempDir().listFiles()?.filter {
             it.isFile && it.lastModified() >= since - 5000
         } ?: emptyList()
         var n = 0
+        var lastErr: String? = null
         for (f in fresh) {
-            val video = isVideoFile(f)
-            val mime = mimeOf(f)
-            try {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    val collection =
-                        if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                        else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                    // SnapTube jaisa: storage root me EasyDownloader folder
-                    val rel = FOLDER
-                    val now = System.currentTimeMillis()
+            val e = exportOne(f)
+            if (e == null) n++ else lastErr = e
+        }
+        return Pair(n, lastErr)
+    }
+
+    /** null = save ho gaya, warna error message. */
+    private fun exportOne(f: File): String? {
+        val video = isVideoFile(f)
+        val mime = mimeOf(f)
+        val now = System.currentTimeMillis()
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            val collection =
+                if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            val places =
+                if (video) listOf(FOLDER, "Movies/$FOLDER", "Download/$FOLDER", "DCIM/$FOLDER")
+                else listOf(FOLDER, "Music/$FOLDER", "Download/$FOLDER")
+            var err: String? = null
+            for (rel in places) {
+                var uri: Uri? = null
+                try {
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
                         put(MediaStore.MediaColumns.MIME_TYPE, mime)
@@ -355,52 +369,67 @@ class MainActivity : AppCompatActivity() {
                         put(MediaStore.MediaColumns.DATE_TAKEN, now)
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
-                    val uri = contentResolver.insert(collection, values)
-                    if (uri != null) {
-                        contentResolver.openOutputStream(uri)?.use { out ->
-                            f.inputStream().use { it.copyTo(out, 64 * 1024) }
-                        }
-                        val done = ContentValues()
-                        done.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                        contentResolver.update(uri, done, null, null)
-                        // gallery/photos ko batao ki naya file aaya hai
-                        val shown = File(
-                            Environment.getExternalStorageDirectory(),
-                            FOLDER + "/" + f.name
-                        )
-                        MediaScannerConnection.scanFile(
-                            this, arrayOf(shown.absolutePath), arrayOf(mime), null
-                        )
-                        f.delete()
-                        n++
+                    uri = contentResolver.insert(collection, values)
+                    if (uri == null) {
+                        err = "insert null ($rel)"
+                        continue
                     }
-                } else {
-                    val dest = File(Environment.getExternalStorageDirectory(), FOLDER)
-                    if (!dest.exists()) dest.mkdirs()
-                    val out = File(dest, f.name)
-                    f.copyTo(out, overwrite = true)
-                    f.delete()
-                    MediaScannerConnection.scanFile(
-                        this, arrayOf(out.absolutePath), arrayOf(mime), null
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        f.inputStream().use { it.copyTo(out, 64 * 1024) }
+                    } ?: run {
+                        err = "stream null ($rel)"
+                        contentResolver.delete(uri, null, null)
+                        continue
+                    }
+                    val done = ContentValues()
+                    done.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    contentResolver.update(uri, done, null, null)
+
+                    val shown = File(
+                        Environment.getExternalStorageDirectory(),
+                        rel + "/" + f.name
                     )
-                    n++
+                    MediaScannerConnection.scanFile(
+                        this, arrayOf(shown.absolutePath), arrayOf(mime), null
+                    )
+                    f.delete()
+                    return null
+                } catch (e: Throwable) {
+                    err = (e.message ?: e.javaClass.simpleName) + " ($rel)"
+                    try {
+                        uri?.let { contentResolver.delete(it, null, null) }
+                    } catch (ignored: Throwable) {
+                    }
                 }
-            } catch (e: Throwable) {
-                // ek file fail ho to baaki chalti rahe
             }
+            return err ?: "save fail"
         }
-        return n
+
+        // Android 9 aur neeche: seedha file likh ke gallery ko batao
+        return try {
+            val dest = File(Environment.getExternalStorageDirectory(), FOLDER)
+            if (!dest.exists()) dest.mkdirs()
+            val out = File(dest, f.name)
+            f.copyTo(out, overwrite = true)
+            f.delete()
+            MediaScannerConnection.scanFile(this, arrayOf(out.absolutePath), arrayOf(mime), null)
+            null
+        } catch (e: Throwable) {
+            e.message ?: "save fail"
+        }
     }
 
-    private fun finish(err: String?, moved: Int) {
+    private fun finish(err: String?, moved: Int, saveErr: String? = null) {
         busy = false
         b.btnDownload.text = "Download"
         b.btnDownload.setBackgroundResource(R.drawable.bg_btn)
         if (err == null) {
             b.progressBar.progress = 100
-            b.status.text =
-                if (moved > 0) "Ho gaya \u2014 gallery/music me save hai"
-                else "Ho gaya, par file save nahi ho payi"
+            b.status.text = when {
+                moved > 0 -> "Ho gaya \u2014 gallery/music me save hai"
+                saveErr != null -> "Save fail: " + saveErr.take(200)
+                else -> "Ho gaya, par file save nahi ho payi"
+            }
             toast(if (moved > 0) "Download complete" else "File save nahi hui")
             ui.postDelayed({ b.progressBox.visibility = View.GONE }, 2500)
         } else {

@@ -10,9 +10,9 @@ android {
     defaultConfig {
         applicationId "com.easydownloader.app"
         minSdk 26
-        targetSdk 28
+        targetSdk 33
         versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1") + 300
-        versionName "1.5.0"
+        versionName "1.6.0"
         ndk { abiFilters 'arm64-v8a' }
     }
 
