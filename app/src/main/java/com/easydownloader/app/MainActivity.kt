@@ -248,55 +248,62 @@ class MainActivity : AppCompatActivity() {
         }
 
         io.execute {
-            var err: Throwable? = null
-            try {
-                YoutubeDL.getInstance().execute(req, "easy-" + System.currentTimeMillis(), cb)
-            } catch (e: Throwable) {
-                err = e
-            }
-
-            // Pehli koshish me thumbnail/metadata embed fail ho jaye to bina uske dobara try karo
-            if (err != null && audioMode) {
-                ui.post { b.status.text = "Retry: bina thumbnail ke…" }
+            // YouTube kabhi kabhi bot-check laga deta hai; alag player clients se try karte hain
+            val plan = listOf(
+                Triple<String?, Boolean, String>(null, true, "normal"),
+                Triple<String?, Boolean, String>(null, false, "bina thumbnail"),
+                Triple<String?, Boolean, String>("tv", false, "tv client"),
+                Triple<String?, Boolean, String>("web_safari", false, "web_safari"),
+                Triple<String?, Boolean, String>("android", false, "android client"),
+                Triple<String?, Boolean, String>("ios", false, "ios client"),
+                Triple<String?, Boolean, String>("mweb", false, "mweb client")
+            )
+            var lastErr: Throwable? = null
+            for ((i, a) in plan.withIndex()) {
+                val (client, embeds, label) = a
+                if (i > 0) ui.post { b.status.text = "Retry $i: $label\u2026" }
                 try {
-                    val r2 = buildRequest(url, dir, audioMode, false)
-                    YoutubeDL.getInstance().execute(r2, "easy2-" + System.currentTimeMillis(), cb)
-                    err = null
+                    val rq = buildRequest(url, dir, audioMode, embeds, client)
+                    YoutubeDL.getInstance().execute(rq, "e$i-" + System.currentTimeMillis(), cb)
+                    lastErr = null
+                    break
                 } catch (e: Throwable) {
-                    err = e
+                    lastErr = e
                 }
             }
 
-            // Video me merge fail ho to best single file se try karo
-            if (err != null && !audioMode) {
-                ui.post { b.status.text = "Retry: single file…" }
-                try {
-                    val r3 = YoutubeDLRequest(url)
-                    r3.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
-                    r3.addOption("--no-mtime")
-                    r3.addOption("--no-playlist")
-                    r3.addOption("-f", "b[height<=$height]/b")
-                    YoutubeDL.getInstance().execute(r3, "easy3-" + System.currentTimeMillis(), cb)
-                    err = null
-                } catch (e: Throwable) {
-                    err = e
-                }
-            }
-
-            val msg = err?.message
+            val msg = lastErr?.message
             ui.post {
                 if (msg == null) {
                     val moved = export(startedAt)
                     finish(null, moved)
                 } else {
-                    finish(msg, 0)
+                    finish(friendly(msg), 0)
                 }
             }
         }
     }
 
-    private fun buildRequest(url: String, dir: File, audio: Boolean, embeds: Boolean): YoutubeDLRequest {
+    /** Error ko aam aadmi ki bhasha me badalta hai. */
+    private fun friendly(m: String): String = when {
+        m.contains("Sign in to confirm", true) ->
+            "YouTube ne is network par bot-check laga diya hai. VPN on karke try karo, ya thodi der baad. (Baaki sites chalti rahengi.)"
+        m.contains("Video unavailable", true) || m.contains("Private video", true) ->
+            "Ye video private ya unavailable hai."
+        m.contains("age", true) && m.contains("restrict", true) ->
+            "Ye video age-restricted hai, download nahi hoga."
+        else -> m
+    }
+
+    private fun buildRequest(
+        url: String,
+        dir: File,
+        audio: Boolean,
+        embeds: Boolean,
+        client: String? = null
+    ): YoutubeDLRequest {
         val req = YoutubeDLRequest(url)
+        if (client != null) req.addOption("--extractor-args", "youtube:player_client=$client")
         req.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
         req.addOption("--no-mtime")
         req.addOption("--no-playlist")
