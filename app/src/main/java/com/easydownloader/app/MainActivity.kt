@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
         b.chip3.setOnClickListener { pick(2) }
         b.btnDownload.setOnClickListener { start() }
 
+        b.btnRescan.setOnClickListener { rescanAll() }
         b.btnUpdate.setOnClickListener {
             b.engineInfo.text = "yt-dlp update ho raha hai…"
             io.execute {
@@ -343,10 +344,14 @@ class MainActivity : AppCompatActivity() {
                     val rel =
                         if (video) Environment.DIRECTORY_DCIM + "/EasyDownloader"
                         else Environment.DIRECTORY_MUSIC + "/EasyDownloader"
+                    val now = System.currentTimeMillis()
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
                         put(MediaStore.MediaColumns.MIME_TYPE, mime)
                         put(MediaStore.MediaColumns.RELATIVE_PATH, rel)
+                        put(MediaStore.MediaColumns.DATE_ADDED, now / 1000L)
+                        put(MediaStore.MediaColumns.DATE_MODIFIED, now / 1000L)
+                        put(MediaStore.MediaColumns.DATE_TAKEN, now)
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                     val uri = contentResolver.insert(collection, values)
@@ -357,6 +362,15 @@ class MainActivity : AppCompatActivity() {
                         val done = ContentValues()
                         done.put(MediaStore.MediaColumns.IS_PENDING, 0)
                         contentResolver.update(uri, done, null, null)
+                        // gallery/photos ko batao ki naya file aaya hai
+                        val base = if (video) Environment.DIRECTORY_DCIM else Environment.DIRECTORY_MUSIC
+                        val shown = File(
+                            File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader"),
+                            f.name
+                        )
+                        MediaScannerConnection.scanFile(
+                            this, arrayOf(shown.absolutePath), arrayOf(mime), null
+                        )
                         f.delete()
                         n++
                     }
@@ -400,6 +414,45 @@ class MainActivity : AppCompatActivity() {
             toast("Download fail hua")
         }
         refreshList()
+    }
+
+    /** Gallery ko dobara scan karwata hai (Google Photos folder na dikhe to). */
+    private fun rescanAll() {
+        try {
+            var count = 0
+            if (Build.VERSION.SDK_INT >= 29) {
+                val dirs = listOf(
+                    Pair(Environment.DIRECTORY_DCIM, MediaStore.Video.Media.EXTERNAL_CONTENT_URI),
+                    Pair(Environment.DIRECTORY_MUSIC, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
+                )
+                for ((base, collection) in dirs) {
+                    val sel = MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ?"
+                    val args = arrayOf(base + "/EasyDownloader%")
+                    contentResolver.query(
+                        collection,
+                        arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE),
+                        sel, args, null
+                    )?.use { c ->
+                        val iName = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                        val iMime = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+                        while (c.moveToNext()) {
+                            val p = File(
+                                File(Environment.getExternalStoragePublicDirectory(base), "EasyDownloader"),
+                                c.getString(iName) ?: continue
+                            )
+                            MediaScannerConnection.scanFile(
+                                this, arrayOf(p.absolutePath), arrayOf(c.getString(iMime) ?: "*/*"), null
+                            )
+                            count++
+                        }
+                    }
+                }
+            }
+            toast(if (count > 0) "$count files rescan ho gaye" else "Kuch nahi mila")
+            refreshList()
+        } catch (e: Throwable) {
+            toast("Rescan fail: " + (e.message ?: ""))
+        }
     }
 
     // ---------------- downloads list ----------------

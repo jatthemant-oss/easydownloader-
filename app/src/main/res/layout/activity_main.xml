@@ -51,6 +51,22 @@
                 android:textSize="10sp" />
 
             <TextView
+                android:id="@+id/btnRescan"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_pill"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="Rescan"
+                android:textColor="@color/muted"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
                 android:id="@+id/btnUpdate"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
@@ -390,7 +406,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
             android:lineSpacingExtra="2dp"
-            android:text="Sirf apna content, ya jiska aapko haq ho — wahi download karo. YouTube/Instagram ki terms aur copyright aapki zimmedari hai."
+            android:text="Video/Reel: DCIM/EasyDownloader  ·  MP3: Music/EasyDownloader\nGoogle Photos me: neeche Library tab → Photos on device → EasyDownloader\n\nSirf apna content, ya jiska aapko haq ho — wahi download karo."
             android:textColor="#5E6678"
             android:textSize="10sp" />
     </LinearLayout>
