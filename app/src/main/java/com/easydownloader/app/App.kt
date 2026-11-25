@@ -2,13 +2,11 @@ package com.easydownloader.app
 
 import android.app.Application
 import android.content.Context
-import android.content.Context.MODE_PRIVATE
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 
 /**
- * yt-dlp + ffmpeg ko ek hi baar load karta hai.
- * Download button tab tak dabata hai jab tak ye ready na ho.
+ * yt-dlp + ffmpeg ko ek hi baar load karta hai, aur yt-dlp ko update rakhta hai.
  */
 object Engine {
     @Volatile
@@ -19,6 +17,9 @@ object Engine {
     var error: String? = null
         private set
 
+    @Volatile
+    var note: String = "Engine shuru ho raha hai…"
+
     @Synchronized
     fun init(ctx: Context) {
         if (ready) return
@@ -27,20 +28,32 @@ object Engine {
             FFmpeg.getInstance().init(ctx)
             ready = true
             error = null
+            note = "Engine ready"
         } catch (e: Throwable) {
             error = e.message ?: "engine init failed"
+            note = "Engine fail: " + (e.message ?: "").take(80)
             return
         }
-        // yt-dlp ko din me ek baar update karte hain, taaki YouTube badalne par app chalti rahe
+        update(ctx, false)
+    }
+
+    /** yt-dlp ko naya version laata hai. force = true par roz ki limit ignore hoti hai. */
+    @Synchronized
+    fun update(ctx: Context, force: Boolean) {
         try {
-            val prefs = ctx.getSharedPreferences("easydl", MODE_PRIVATE)
+            val prefs = ctx.getSharedPreferences("easydl", Context.MODE_PRIVATE)
             val last = prefs.getLong("ytdlp_update", 0L)
-            if (System.currentTimeMillis() - last > 24L * 60L * 60L * 1000L) {
-                YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel._STABLE)
-                prefs.edit().putLong("ytdlp_update", System.currentTimeMillis()).apply()
+            val day = 24L * 60L * 60L * 1000L
+            if (!force && System.currentTimeMillis() - last < day) {
+                note = "Engine ready"
+                return
             }
+            note = "yt-dlp update ho raha hai…"
+            YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel._STABLE)
+            prefs.edit().putLong("ytdlp_update", System.currentTimeMillis()).apply()
+            note = "yt-dlp updated"
         } catch (e: Throwable) {
-            // internet nahi hai to purani yt-dlp se kaam chalega
+            note = "yt-dlp update fail: " + (e.message ?: "").take(70)
         }
     }
 }

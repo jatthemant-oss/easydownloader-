@@ -74,6 +74,14 @@ class MainActivity : AppCompatActivity() {
         b.chip3.setOnClickListener { pick(2) }
         b.btnDownload.setOnClickListener { start() }
 
+        b.btnUpdate.setOnClickListener {
+            b.engineInfo.text = "yt-dlp update ho raha hai…"
+            io.execute {
+                Engine.update(applicationContext, true)
+                ui.post { b.engineInfo.text = Engine.note }
+            }
+        }
+        ui.postDelayed({ b.engineInfo.text = Engine.note }, 1500)
         b.linkInput.setOnFocusChangeListener { _, _ -> detect() }
         setMode(true)
         pick(1)
@@ -240,21 +248,72 @@ class MainActivity : AppCompatActivity() {
         }
 
         io.execute {
-            var err: String? = null
+            var err: Throwable? = null
             try {
                 YoutubeDL.getInstance().execute(req, "easy-" + System.currentTimeMillis(), cb)
             } catch (e: Throwable) {
-                err = e.message ?: "download failed"
+                err = e
             }
+
+            // Pehli koshish me thumbnail/metadata embed fail ho jaye to bina uske dobara try karo
+            if (err != null && audioMode) {
+                ui.post { b.status.text = "Retry: bina thumbnail ke…" }
+                try {
+                    val r2 = buildRequest(url, dir, audioMode, false)
+                    YoutubeDL.getInstance().execute(r2, "easy2-" + System.currentTimeMillis(), cb)
+                    err = null
+                } catch (e: Throwable) {
+                    err = e
+                }
+            }
+
+            // Video me merge fail ho to best single file se try karo
+            if (err != null && !audioMode) {
+                ui.post { b.status.text = "Retry: single file…" }
+                try {
+                    val r3 = YoutubeDLRequest(url)
+                    r3.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
+                    r3.addOption("--no-mtime")
+                    r3.addOption("--no-playlist")
+                    r3.addOption("-f", "b[height<=$height]/b")
+                    YoutubeDL.getInstance().execute(r3, "easy3-" + System.currentTimeMillis(), cb)
+                    err = null
+                } catch (e: Throwable) {
+                    err = e
+                }
+            }
+
+            val msg = err?.message
             ui.post {
-                if (err == null) {
+                if (msg == null) {
                     val moved = export(startedAt)
                     finish(null, moved)
                 } else {
-                    finish(err, 0)
+                    finish(msg, 0)
                 }
             }
         }
+    }
+
+    private fun buildRequest(url: String, dir: File, audio: Boolean, embeds: Boolean): YoutubeDLRequest {
+        val req = YoutubeDLRequest(url)
+        req.addOption("-o", File(dir, "%(title).80s.%(ext)s").absolutePath)
+        req.addOption("--no-mtime")
+        req.addOption("--no-playlist")
+        if (audio) {
+            req.addOption("-x")
+            req.addOption("--audio-format", "mp3")
+            req.addOption("--audio-quality", "${kbps}K")
+            if (embeds) {
+                req.addOption("--embed-thumbnail")
+                req.addOption("--convert-thumbnails", "jpg")
+                req.addOption("--embed-metadata")
+            }
+        } else {
+            req.addOption("-f", "bv*[height<=$height]+ba/b[height<=$height]/b")
+            req.addOption("--merge-output-format", "mp4")
+        }
+        return req
     }
 
     /**
@@ -330,7 +389,7 @@ class MainActivity : AppCompatActivity() {
             ui.postDelayed({ b.progressBox.visibility = View.GONE }, 2500)
         } else {
             b.progressBar.progress = 0
-            b.status.text = "Fail: " + err.take(120)
+            b.status.text = "Fail: " + err.take(400)
             toast("Download fail hua")
         }
         refreshList()
