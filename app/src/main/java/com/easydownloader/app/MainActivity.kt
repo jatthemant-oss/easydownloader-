@@ -374,12 +374,14 @@ class MainActivity : AppCompatActivity() {
                         err = "insert null ($rel)"
                         continue
                     }
-                    contentResolver.openOutputStream(uri)?.use { out ->
-                        f.inputStream().use { it.copyTo(out, 64 * 1024) }
-                    } ?: run {
+                    val stream = contentResolver.openOutputStream(uri)
+                    if (stream == null) {
                         err = "stream null ($rel)"
                         contentResolver.delete(uri, null, null)
                         continue
+                    }
+                    stream.use { out ->
+                        f.inputStream().use { it.copyTo(out, 64 * 1024) }
                     }
                     val done = ContentValues()
                     done.put(MediaStore.MediaColumns.IS_PENDING, 0)
